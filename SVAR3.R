@@ -4,7 +4,9 @@ library(mFilter)
 library(xts)
 library(fUnitRoots) #test Adf avec constante, tendance ou aucun
 library(vars) #estimate a VAR model
-
+library(car)
+library(haven)
+library(AER) #pour les régressions à variables instrumentales
 
 #J'ai pas trouvé un déflateur du PIB trimestriel 
 rawIPC <- read.csv("IPC-indice.csv", sep="," , dec=".")
@@ -92,14 +94,14 @@ adfTest(TAlog-Glog, type="ct")
 #Donc on va travailler avec un modèle VAR en différence première
 
 #Estimation d'un VAR en différence première
-Y <- data.frame(deltaPIB, deltaG, deltaTA)
+X <- data.frame(deltaTA, deltaG, deltaPIB)
 #On détermine d'abord le nombre de retard
-VARselect(Y, lag.max = 8, type = "both") #On choisit 8 car on suppose que les variables du modèle ne peuvent
+VARselect(X, lag.max = 8, type = "both") #On choisit 8 car on suppose que les variables du modèle ne peuvent
 #avoir d'impact les unes sur les autres après deux années)
 #Tous indiquent 1
 
-Y <- Y[, c("deltaPIB", "deltaG", "deltaTA")]
-est <- VAR(Y,p=1, type="both")
+X <- X[, c("deltaTA", "deltaG", "deltaPIB")]
+est <- VAR(X,p=1, type="both")
 est
 summary(est, equation = "deltaTA")
 plot(est, names= "deltaPIB")
@@ -110,7 +112,7 @@ ser11$serial
 #p=1 résidus autocorrélés donc j'augmente p progressivement
 #H0 étant pas d'autocorrélation
 
-est <- VAR(Y,p=7, type="both")
+est <- VAR(X,p=7, type="both")
 est
 summary(est, equation = "deltaTA")
 plot(est, names= "deltaPIB")
@@ -139,14 +141,14 @@ adfTest(deltaTAres, type="c")
 #oki
 
 
-Yres <- data.frame(deltaPIBres, deltaGres, deltaTAres)
+Xres <- data.frame(deltaTAres, deltaGres, deltaPIBres)
 #On détermine d'abord le nombre de retard
-VARselect(Yres, lag.max = 8, type = "both") #On choisit 8 car on suppose que les variables du modèle ne peuvent
+VARselect(Xres, lag.max = 8, type = "both") #On choisit 8 car on suppose que les variables du modèle ne peuvent
 #avoir d'impact les unes sur les autres après deux années)
 #Tous indiquent 1
 
-Yres <- Yres[, c("deltaPIBres", "deltaGres", "deltaTAres")]
-estres <- VAR(Yres,p=1, type="both")
+Xres <- Xres[, c("deltaTAres", "deltaGres", "deltaPIBres")]
+estres <- VAR(Xres,p=1, type="both")
 estres
 summary(estres, equation = "deltaPIBres")
 plot(estres, names= "deltaPIBres")
@@ -168,8 +170,47 @@ norm3$jb.mul
 #par contre constante a l'air significatif
 
 
+#Passage au VAR structurel 
+#Identification de M1 et M2
+M1 = matrix( c(1, 0, -99, 0, 1, -99,-99,-99, 1), nrow=3, ncol=3) #je mets 99 quand c'est une valeur inconnue pour le moment
+M2 = matrix( c(1, 99, 0, 99, 1, 0,0,0, 1), nrow=3, ncol=3)
 
+#Argument stabilisateurs automatiques + pol discrétionnaire => élasticité des TA et G aux PIB (on reprend les valeurs du papier)
+M1[1,3]<- -0.8
+M1[2,3]<-0
 
+#Argument : décisions portant sur les TA précèdent celles sur les dépenses
+M2[1,2]<- 0
+
+#On calcule les epsilon(ta) 
+eps_ta=est_residuals[,1]-0.8*est_residuals[,3]
+
+#Regression MCO sur la deuxième equation pour obtenir beta_gt
+lineareq2 <- lm(est_residuals[,2] ~ eps_ta - 1) #on ne veut pas d'intercept
+#on n'obtient -0.02, Biau et Girard eux obtiennent -0.05.
+eps_tg <- residuals(lineareq2)
+M2[2,1]<- summary(lineareq2)$coefficients[1, 1]
+#Tous les coefficients de M2 sont maintenant identifiés !!!!
+
+#Regression MCO (avec variables instrumentales) sur la troisième équation pour obtenir gamma_yt et gamma_yg
+#Les IV sont eps_ta pour u_ta et eps_tg pour u_tg
+lineareq3 <- ivreg(est_residuals[,3] ~ est_residuals[,1] + est_residuals[,2] -1| eps_ta +eps_tg)
+M1[3,1]<- - summary(lineareq3)$coefficients[1,1]
+M1[3,2] <- - summary(lineareq3)$coefficients[2,1]
+#Tous les coefficients de M1 sont aussi identifiés
+
+#Les IRFs
+#MA representation
+macoeff <- Phi(estres, nstep=100)
+
+#IRF d'un choc sur u_ta sur deltaTAt
+IRF_TAsurTA <- matrix(numeric(0), 101,1)
+for (j in 1:101)
+{
+  IRF_TAsurTA[j,1] <-macoeff[1,1,j]
+}
+#Or c'est pas ça ce qu'ils ont dans le papier eux c'est un choc d'un euro et ils ont l'effet sur les variables 
+#en niveau...
 
 
 
