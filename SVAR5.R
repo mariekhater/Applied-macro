@@ -19,45 +19,43 @@ library(vars) #estimate a VAR model
 #J'ai pas trouv? un d?flateur du PIB trimestriel 
 rawIPC <- read.csv("IPC-indice.csv", sep="," , dec=".")
 
-IPC <- ts(rawIPC[77:152,17] , start =c(1999,1) , frequency =4) # indice des prix ? la conso (deflateur)
+IPC <- ts(rawIPC[77:141,17] , start =c(1999,1) , frequency =4) # indice des prix ? la conso (deflateur)
 plot(IPC)
 
 rawPIBval <- t_pib_val #PIB en valeur
 
-PIBval <- ts(rawPIBval[207:282,2], start=c(1999,1) , frequency=4)
+PIBval <- ts(rawPIBval[207:271,2], start=c(1999,1) , frequency=4)
 PIB <- PIBval/IPC
 plot(PIB)
 
 
 rawAPU <- t_compteapu_val # en valeur
 
-depensestot <- ts(rawAPU[207:282,4], start=c(1999,1) , frequency=4)
+depensestot <- ts(rawAPU[207:271,4], start=c(1999,1) , frequency=4)
 
 # On d?finit une variable d?penses publiques G (cf papier Biau et Girard) ou on exclut les transferts
 #aux m?nages et aux entreprises ainsi que la charge de la dette
-consint <- ts(rawAPU[207:282,5], start=c(1999,1) , frequency=4)
-remunerationsal <- ts(rawAPU[207:282,6], start=c(1999,1) , frequency=4)
-autresdepfctnmt <- ts(rawAPU[207:282,8], start=c(1999,1), frequency=4)
-FBCF <- ts(rawAPU[207:282,15], start=c(1999,1) , frequency=4)
-autresfinan <- ts(rawAPU[207:282,16], start=c(1999,1) , frequency=4)
+consint <- ts(rawAPU[207:271,5], start=c(1999,1) , frequency=4)
+remunerationsal <- ts(rawAPU[207:271,6], start=c(1999,1) , frequency=4)
+autresdepfctnmt <- ts(rawAPU[207:271,8], start=c(1999,1), frequency=4)
+FBCF <- ts(rawAPU[207:271,15], start=c(1999,1) , frequency=4)
+autresfinan <- ts(rawAPU[207:271,16], start=c(1999,1) , frequency=4)
 depenses <- consint + remunerationsal + autresdepfctnmt + FBCF + autresfinan
 G <- depenses/IPC
 plot(G)
 
 #On d?finit les recettes publiques TA (cf papier Biau et Girard) comme la somme de G et de la capacit? de financement
-recettes <- ts(rawAPU[207:282,18], start=c(1999,1) , frequency=4)
-capfinancement <- ts(rawAPU[207:282,2], start=c(1999,1) , frequency=4)
+recettes <- ts(rawAPU[207:271,18], start=c(1999,1) , frequency=4)
+capfinancement <- ts(rawAPU[207:271,2], start=c(1999,1) , frequency=4)
 recettes <- capfinancement + depenses
 TA <- recettes/IPC
 plot(TA)
 #On n'a pas d?duit l'impot sur les soci?t?s (pour le moment) contrairement au papier de Biau et Girard
 #Normalement faisable avec comptabilit? nationale item D51
 
-
 #On ajoute le taux d'intérêt interbancaire
-taux<-ts(taux_interbancaire[1:76,3]+1, start=c(1999,1) , frequency=4)
+taux<-ts(taux_interbancaire[1:65,3], start=c(1999,1) , frequency=4)
 plot(taux)
-#je rajoute +1 pour éviter les log de quelque chose négatif
 
 PIBlog <-log(PIB)
 Glog <- log(G)
@@ -129,22 +127,24 @@ adfTest(TAlog-Glog, type="ct")
 Y <- data.frame(deltaPIB, deltaG, deltaTA, deltaIPC, deltataux)
 names(Y)<-c("deltaPIB","deltaG","deltaTA","deltaIPC","deltataux")
 #On détermine d'abord le nombre de retard
-VARselect(Y, lag.max = 8, type = "both") #On choisit 8 car on suppose que les variables du modèle ne peuvent
+VARselect(Y, lag.max = 8, type = "const") #On choisit 8 car on suppose que les variables du modèle ne peuvent
 #avoir d'impact les unes sur les autres aprés deux années)
-#Tous indiquent 1 (j'ai fait les tests aussi en changeant le type, on trouve toujours 1)
+#on a 7, 1 ou 8... --> choix fait avec le test sur l'autocorrélation des résidus
 
 #Test de Johansen
-jotest=ca.jo(Y, type="trace", K=2, ecdet="const", spec="longrun")
+jotest=ca.jo(Y, type="trace", K=4, ecdet="const", spec="longrun")
 summary(jotest)
-#Il y aurait 5 relations de cointégration ??? 
+#Il y aurait 2 relations de cointégration à 5 % (cohérent avec le papier)
 
 
-est <- VAR(Y,p=1, type="both") #
+est <- VAR(Y,p=4, type="const") #
 est
 summary(est, equation = "deltaTA")
-plot(est, names="deltaG")
+plot(est, names="deltaTA")
 summary(est, equation="deltaG")
+plot(est, names="deltaG")
 summary(est, equation="deltaPIB")
+plot(est,names="deltaPIB")
 
 ser11 <- serial.test(est, lags.pt = 16)
 ser11$serial
@@ -156,6 +156,5 @@ acf(res)
 norm3 <- normality.test(est)
 norm3$jb.mul
 #On rejette que les résidus suivent une loi normale... 
-#Aucun coeff significatif dans l'équation deltaPIB
-
+#problème de significativité des coeff
 
