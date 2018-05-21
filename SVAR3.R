@@ -62,6 +62,32 @@ adfTest(Glog,  type="ct")
 adfTest(TAlog, type="ct")
 #On ne peut pas rejeter l'existence d'une racine unitaire pour les trois séries qd on prend en compte tendance et constante
 
+#On souhaite maintenant tester l'existence d'une relation de cointégration
+#Eventuellement entre deltaTA et deltaG (deltaTA-deltaG aurait un sens économique)
+plot(TAlog-Glog) #bof stationnaire semble y avoir une constante (trend?)
+#On va quand meme tester la stationnarité de la différence
+adfTest(TAlog-Glog, type="c")
+adfTest(TAlog-Glog, type="ct")
+#On ne peut pas rejeter pour les deux tests que c'est non stationnaire
+#BG trouve de meme (en ce qui concerne la relation de cointégration) pour la France sur des données antérieures et idem USA avec BP(2002)
+#Test de Johansen
+X <- data.frame(deltaTA, deltaG, deltaPIB)
+jotest=ca.jo(X, type="trace", K=3, ecdet="const", spec="longrun")
+summary(jotest)
+#Il indique 3 relations de cointégration soit que les 3 variables sont stationnaires (doit etre du à la crise de 2009)
+
+#On restreint à avant 2009
+inds <- seq(as.Date("1980-01-01"), as.Date("2017-12-31"), by = "quarter")
+deltaPIBres <- subset(deltaPIB, inds >= as.Date("1980-01-01") & inds < as.Date("2009-01-01"))
+deltaGres <- subset(deltaG, inds >= as.Date("1980-01-01") & inds < as.Date("2009-01-01"))
+deltaTAres <- subset(deltaTA, inds >= as.Date("1980-01-01") & inds < as.Date("2009-01-01"))
+#On a 116 points
+Xres <- data.frame(deltaTAres, deltaGres, deltaPIBres)
+jotest2=ca.jo(Xres, type="trace", K=3, ecdet="const", spec="longrun")
+summary(jotest2)
+#Dans ce cas 2 relations de cointégration mais difficile de donner une interprétation économique
+#aux deux relations de long terme
+
 #On prend tout en différence première *100 pour avoir en pourcentage : argument Hamilton (1994)
 #le passage en différence accroît la précision de l'estimation du modèle,
 #dans une situation où l'échantillon est de petite taille
@@ -82,20 +108,10 @@ adfTest(deltaG, type="nc")
 
 #Conclusion : nos 3 séries sont I(1)
 
-#On souhaite maintenant tester l'existence d'une relation de cointégration
-#Eventuellement entre deltaTA et deltaG (deltaTA-deltaG aurait un sens économique)
-plot(TAlog-Glog) #bof stationnaire semble y avoir une constante (trend?)
-#On va quand meme tester la stationnarité de la différence
-adfTest(TAlog-Glog, type="c")
-adfTest(TAlog-Glog, type="ct")
-#On ne peut pas rejeter pour les deux tests que c'est non stationnaire
-#BG trouve de meme (en ce qui concerne la relation de cointégration) pour la France sur des données antérieures et idem USA avec BP(2002)
-
 #Conclusion: On a trois variables I(1) et pas de relation de cointégration apparente 
 #Donc on va travailler avec un modèle VAR en différence première
 
 #Estimation d'un VAR en différence première
-X <- data.frame(deltaTA, deltaG, deltaPIB)
 #On détermine d'abord le nombre de retard
 VARselect(X, lag.max = 8, type = "both") #On choisit 8 car on suppose que les variables du modèle ne peuvent
 #avoir d'impact les unes sur les autres après deux années)
@@ -126,12 +142,7 @@ ser11$serial
 res<- resid(est)
 acf(res)
 
-#Je vais regarder si le problème c'est les données après 2009
-inds <- seq(as.Date("1980-01-01"), as.Date("2017-12-31"), by = "quarter")
-deltaPIBres <- subset(deltaPIB, inds >= as.Date("1980-01-01") & inds < as.Date("2009-01-01"))
-deltaGres <- subset(deltaG, inds >= as.Date("1980-01-01") & inds < as.Date("2009-01-01"))
-deltaTAres <- subset(deltaTA, inds >= as.Date("1980-01-01") & inds < as.Date("2009-01-01"))
-#On a 116 points
+#On restreint à avant 2009 
 plot(deltaPIBres)
 plot(deltaGres)
 plot(deltaTAres)
@@ -141,8 +152,6 @@ adfTest(deltaGres, type="c")
 adfTest(deltaTAres, type="c")
 #oki
 
-
-Xres <- data.frame(deltaTAres, deltaGres, deltaPIBres)
 #On détermine d'abord le nombre de retard
 VARselect(Xres, lag.max = 8, type = "cons") #On choisit 8 car on suppose que les variables du modèle ne peuvent
 #avoir d'impact les unes sur les autres après deux années)
