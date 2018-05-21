@@ -7,6 +7,7 @@ library(vars) #estimate a VAR model
 library(car)
 library(haven)
 library(AER) #pour les régressions à variables instrumentales
+library(dse)
 
 #J'ai pas trouvé un déflateur du PIB trimestriel 
 rawIPC <- read.csv("IPC-indice.csv", sep="," , dec=".")
@@ -143,12 +144,12 @@ adfTest(deltaTAres, type="c")
 
 Xres <- data.frame(deltaTAres, deltaGres, deltaPIBres)
 #On détermine d'abord le nombre de retard
-VARselect(Xres, lag.max = 8, type = "both") #On choisit 8 car on suppose que les variables du modèle ne peuvent
+VARselect(Xres, lag.max = 8, type = "cons") #On choisit 8 car on suppose que les variables du modèle ne peuvent
 #avoir d'impact les unes sur les autres après deux années)
 #Tous indiquent 1
 
 Xres <- Xres[, c("deltaTAres", "deltaGres", "deltaPIBres")]
-estres <- VAR(Xres,p=1, type="both")
+estres <- VAR(Xres,p=1, type="cons")
 estres
 summary(estres, equation = "deltaPIBres")
 plot(estres, names= "deltaPIBres")
@@ -200,79 +201,146 @@ M1[3,2] <- - summary(lineareq3)$coefficients[2,1]
 #Tous les coefficients de M1 sont aussi identifiés
 
 #Les IRFs
-#MA representation
-macoeff <- Phi(estres, nstep=100)
 
-#IRF d'un choc sur u_ta sur deltaTAt
-IRF_TAsurTA <- matrix(numeric(0), 101,1)
-for (j in 1:101)
+
+P <- inv(M1)%*%M2
+
+results <- matrix(numeric(0), 3,10)
+
+#On construit la matrix rho pour pouvoir après calculer Xt=rho*X(t-1)+epsilont
+rho <- matrix(numeric(0),3,3)
+
+for (j in 1:3)
 {
-  IRF_TAsurTA[j,1] <-macoeff[1,1,j]
+    rho[1,j] <- coef(estres)$deltaTAres[j,1]
 }
-#Or c'est pas ça ce qu'ils ont dans le papier eux c'est un choc d'un euro et ils ont l'effet sur les variables 
-#en niveau...
 
+for (j in 1:3)
+{
+  rho[2,j] <- coef(estres)$deltaGres[j,1]
+}
 
+for (j in 1:3)
+{
+  rho[3,j] <- coef(estres)$deltaPIBres[j,1]
+}
 
+epsilon <- matrix(numeric(0), 3,1)
+epsilon[1,1]<-1
+epsilon[2,1]<-0
+epsilon[3,1]<-0
 
+results[1:3,1] <- P%*%epsilon
 
+for (j in 2:10)
+{
+  results[,j] <- rho%*%results[,j-1]
+}
 
-#BROUILLON
-#Brouillon
-#Je vais essayer de regarder mes séries en le détrendant + avec des indicatrices
-detrendPIB <- hpfilter(PIBlog,freq=1600)$cycle
-detrendTA <- hpfilter(TAlog, freq=1600)$cycle
-detrendG <- hpfilter(Glog, freq=1600)$cycle
+#Monte Carlo
+IRF_TA <- matrix(numeric(0), 10,5)
+IRF_G <- matrix(numeric(0), 10,5)
+IRF_PIB <- matrix(numeric(0),10,5)
+for (i in 1:5)
+{
+    #Générer de nouvelles données de meme taille
+    Xmonte <- matrix(numeric(0), 3,115)
+    Xmonte[,1]=P%*%residuals(estres)[sample(1:115, 1),]
+    for (j in 2:115)
+    {
+      Xmonte[,j]=rho%*%Xmonte[,j-1]+P%*%residuals(estres)[sample(1:115, 1),]
+    }
+    
+    #Estime le modèle sur ces données
+          
+    Xmonte <- data.frame(Xmonte[1,], Xmonte[2,], Xmonte[3,])
+    estmonte <- VAR(Xmonte,p=1, type="cons")
+    estmonte_residuals <-residuals(estmonte)
+      #Estimer le nouveau P (donc M1 et M2)
+          
+      Mmonte1 = matrix( c(1, 0, -99, 0, 1, -99,-99,-99, 1), nrow=3, ncol=3) #je mets 99 quand c'est une valeur inconnue pour le moment
+      Mmonte2 = matrix( c(1, 99, 0, 99, 1, 0,0,0, 1), nrow=3, ncol=3)
+      Mmonte1[1,3]<- -0.8
+      Mmonte1[2,3]<-0
+      Mmonte2[1,2]<- 0
+          
+          #On calcule les epsilon(ta) 
+          epsmonte_ta=estmonte_residuals[,1]-0.8*estmonte_residuals[,3]
+          
+          #Regression MCO sur la deuxième equation pour obtenir beta_gt
+          linearmonteeq2 <- lm(estmonte_residuals[,2] ~ epsmonte_ta - 1) 
+          epsmonte_tg <- residuals(linearmonteeq2)
+          Mmonte2[2,1]<- summary(linearmonteeq2)$coefficients[1, 1]
+          
+          
+          #Regression MCO (avec variables instrumentales) sur la troisième équation pour obtenir gamma_yt et gamma_yg
+          #Les IV sont eps_ta pour u_ta et eps_tg pour u_tg
+          linearmonteeq3 <- ivreg(estmonte_residuals[,3] ~ estmonte_residuals[,1] + estmonte_residuals[,2] -1| epsmonte_ta +epsmonte_tg)
+          Mmonte1[3,1]<- - summary(linearmonteeq3)$coefficients[1,1]
+          Mmonte1[3,2] <- - summary(linearmonteeq3)$coefficients[2,1]
+          #Tous les coefficients de M1 sont aussi identifiés
+          
+      #IRFs
+      Pmonte <- inv(Mmonte1)%*%Mmonte2
+          
+      resultsmonte <- matrix(numeric(0), 3,10)
+          
+          #On construit la matrix rho pour pouvoir après calculer Xt=rho*X(t-1)+epsilont
+          rhomonte <- matrix(numeric(0),3,3)
+          
+          for (j in 1:3)
+          {
+            rhomonte[1,j] <- coef(estmonte)$Xmonte.1...[j,1]
+          }
+          
+          for (j in 1:3)
+          {
+            rhomonte[2,j] <- coef(estmonte)$Xmonte.2...[j,1]
+          }
+          
+          for (j in 1:3)
+          {
+            rhomonte[3,j] <- coef(estmonte)$Xmonte.3...[j,1]
+          }
+          
+      epsilonmonte <- matrix(numeric(0), 3,1)
+      epsilonmonte[1,1]<-1
+      epsilonmonte[2,1]<-0
+      epsilonmonte[3,1]<-0
+          
+      resultsmonte[,1] <- Pmonte%*%epsilonmonte
+          
+      for (j in 2:10)
+        {
+          resultsmonte[,j] <- rhomonte%*%resultsmonte[,j-1]
+      }
+      
+  IRF_TA[,i] <-resultsmonte[1,]
+  IRF_G[,i] <- resultsmonte[2,]
+  IRF_PIB[,i]<- resultsmonte[3,]
+}
 
-adfTest(detrendPIB, type=c("nc"))
-adfTest(detrendG, type=c("nc"))
-adfTest(detrendTA, type=c("nc"))
-#rejette existence d'une racine unitaire
+varIRF_TA <- matrix(numeric(0), 10,1)
+for (j in 1:10)
+{
+  varIRF_TA[j,]<-var(IRF_TA[j,])
+}
+sc=1.6449 #90% intervalle de confiance
+Max_TA <- results[1,] +sc*sqrt(varIRF_TA)
+Min_TA <- results[1,] -sc*sqrt(varIRF_TA)
 
-Y2 <- data.frame(detrendPIB, detrendG, detrendTA)
-#On détermine d'abord le nombre de retard
-VARselect(Y2, lag.max = 8, type = "const") #On choisit 8 car on suppose que les variables du modèle ne peuvent
-#avoir d'impact les unes sur les autres après deux années)
-#Indiquent 2 ou 5
+varIRF_G <- matrix(numeric(0), 10,1)
+for (j in 1:10)
+{
+  varIRF_G[j,]<-var(IRF_G[j,])
+}
+Max_G <- results[2,] +sc*sqrt(varIRF_G)
+Min_G <- results[2,] -sc*sqrt(varIRF_G)
 
-Y2 <- Y2[, c("detrendPIB", "detrendG", "detrendTA")]
-est2 <- VAR(Y2,p=8, type="const")
-est2
-summary(est2, equation = "detrendPIB")
-plot(est2, names= "detrendPIB")
-#le fit est bien meilleur mais résidus sont autocorréles
-summary(est2, equation="detrendG")
-
-ser2 <- serial.test(est, lags.pt = 16, type = "PT.asymptotic")
-ser2$serial
-
-norm2 <- normality.test(est2)
-norm2$jb.mul
-#auto-corrélé et loins d'etre normaux
-
-inds <- seq(as.Date("1980-01-01"), as.Date("2017-12-31"), by = "quarter")
-dummy <- as.numeric(inds >= "2009-01-01" & inds<"2010-01-01")
-dummy2 <-  as.numeric(inds >= "1992-02-01" & inds<="1993-04-01")
-detrendPIB2 <- residuals(lm(PIBlog ~1 + inds + dummy))
-detrendG2 <- residuals (lm(Glog ~ 1+ inds ))
-detrendTA2 <- residuals (lm(TAlog ~ 1 + inds + dummy + dummy2))
-#juste pour TA adf dnne 
-
-Y3 <- data.frame(detrendPIB2, detrendG2, detrendTA2)
-#On détermine d'abord le nombre de retard
-VARselect(Y3, lag.max = 8, type = "const") #On choisit 8 car on suppose que les variables du modèle ne peuvent
-#avoir d'impact les unes sur les autres après deux années)
-#Indiquent 2 ou 3
-
-Y3 <- Y3[, c("detrendPIB2", "detrendG2", "detrendTA2")]
-est3 <- VAR(Y3,p=5, type="const")
-est3
-summary(est3, equation = "detrendPIB2")
-plot(est3, names= "detrendPIB2")
-ser3 <- serial.test(est3, lags.pt = 16, type = "PT.asymptotic")
-ser3$serial
-est3_residuals <- resid(est3)
-acf(est3_residuals)
-
-norm3 <- normality.test(est3)
-norm3$jb.mul
+varIRF_PIB <- matrix(numeric(0), 10,1)
+for (j in 1:10)
+{
+  varIRF_PIB[j,]<-var(IRF_PIB[j,])
+}
+Max_PIB <- results[2,] +sc*sqrt(varIRF_PIB)
+Min_PIB <- results[2,] -sc*sqrt(varIRF_PIB)
