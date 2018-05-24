@@ -9,10 +9,10 @@ library(haven)
 library(AER) #pour les régressions à variables instrumentales
 library(dse)
 
-#J'ai pas trouvé un déflateur du PIB trimestriel 
+#On importe les données 
 rawIPC <- read.csv("IPC-indice.csv", sep="," , dec=".")
 
-IPC <- ts(rawIPC$Value , start =c(1980,1) , frequency =4) # indice des prix à la conso (deflateur)
+IPC <- ts(rawIPC$Value[13:116] , start =c(1983,1) , frequency =4) # indice des prix à la conso (deflateur)
 plot(IPC)
 
 rawPIBval <- read.xlsx("t_pib_val.xls", sheetName = "Niveaux") #PIB en valeur
@@ -42,10 +42,9 @@ capfinancement <- ts(as.numeric(as.character(rawAPU[131:282,2])), start=c(1980,1
 recettes <- capfinancement + depenses
 TA <- recettes/IPC
 plot(TA)
-#On n'a pas déduit l'impot sur les sociétés (pour le moment) contrairement au papier de Biau et Girard
-#Normalement faisable avec comptabilité nationale item D51
 
-#Estimation d'un VAR3 : 1980Q1 to 2017Q3 => 151 trimestres
+
+#Estimation d'un VAR3 : 1983Q1 to 2008Q4 => 104 trimestres
 
 PIBlog <-log(PIB)
 Glog <- log(G)
@@ -64,12 +63,11 @@ adfTest(TAlog, type="ct")
 
 #On souhaite maintenant tester l'existence d'une relation de cointégration
 #Eventuellement entre deltaTA et deltaG (deltaTA-deltaG aurait un sens économique)
-plot(TAlog-Glog) #bof stationnaire semble y avoir une constante (trend?)
+plot(TAlog-Glog) #Ne semble pas stationnaire
 #On va quand meme tester la stationnarité de la différence
 adfTest(TAlog-Glog, type="c")
 adfTest(TAlog-Glog, type="ct")
 #On ne peut pas rejeter pour les deux tests que c'est non stationnaire
-#BG trouve de meme (en ce qui concerne la relation de cointégration) pour la France sur des données antérieures et idem USA avec BP(2002)
 
 #Test de Johansen
 
@@ -78,19 +76,8 @@ deltaTA <- diff(TAlog)*100
 deltaG <- diff(Glog)*100
 
 X <- data.frame(deltaTA, deltaG, deltaPIB)
-jotest=ca.jo(X, type="trace", K=3, ecdet="const", spec="longrun")
+jotest=ca.jo(X, type="trace", K=4, ecdet="const", spec="longrun")
 summary(jotest)
-#Il indique 3 relations de cointégration soit que les 3 variables sont stationnaires (doit etre du à la crise de 2009)
-
-#On restreint à avant 2009
-inds <- seq(as.Date("1980-01-01"), as.Date("2017-12-31"), by = "quarter")
-deltaPIBres <- subset(deltaPIB, inds >= as.Date("1980-01-01") & inds < as.Date("2009-01-01"))
-deltaGres <- subset(deltaG, inds >= as.Date("1980-01-01") & inds < as.Date("2009-01-01"))
-deltaTAres <- subset(deltaTA, inds >= as.Date("1980-01-01") & inds < as.Date("2009-01-01"))
-#On a 116 points
-Xres <- data.frame(deltaTAres, deltaGres, deltaPIBres)
-jotest2=ca.jo(Xres, type="trace", K=3, ecdet="const", spec="longrun")
-summary(jotest2)
 #Dans ce cas 2 relations de cointégration mais difficile de donner une interprétation économique
 #aux deux relations de long terme
 
@@ -119,7 +106,7 @@ VARselect(X, lag.max = 8, type = "both") #On choisit 8 car on suppose que les va
 #Tous indiquent 1
 
 X <- X[, c("deltaTA", "deltaG", "deltaPIB")]
-est <- VAR(X,p=1, type="both")
+est <- VAR(X,p=3, type="cons")
 est
 summary(est, equation = "deltaTA")
 plot(est, names= "deltaPIB")
@@ -127,58 +114,16 @@ summary(est, equation="deltaG")
 
 ser11 <- serial.test(est, lags.pt = 16, type = "PT.adjusted")
 ser11$serial
-#p=1 résidus autocorrélés donc j'augmente p progressivement
+#p=1 résidus autocorrélés donc j'augmente p progressivement jusqu'à p=3
 #H0 étant pas d'autocorrélation
 
-est <- VAR(X,p=7, type="both")
-est
-summary(est, equation = "deltaTA")
-plot(est, names= "deltaPIB")
-summary(est, equation="deltaG")
 
-ser11 <- serial.test(est, lags.pt = 16)
-ser11$serial
-#residus sont auto-corrélés meme quand je passe à 8 lags (pas bon)
-#j'obtiens la p-value la plus grande pour p=7
 res<- resid(est)
 acf(res)
 
-#On restreint à avant 2009 
-plot(deltaPIBres)
-plot(deltaGres)
-plot(deltaTAres)
-#semble stationnaire
-adfTest(deltaPIBres, type="c")
-adfTest(deltaGres, type="c")
-adfTest(deltaTAres, type="c")
-#oki
-
-#On détermine d'abord le nombre de retard
-VARselect(Xres, lag.max = 8, type = "cons") #On choisit 8 car on suppose que les variables du modèle ne peuvent
-#avoir d'impact les unes sur les autres après deux années)
-#Tous indiquent 1
-
-Xres <- Xres[, c("deltaTAres", "deltaGres", "deltaPIBres")]
-estres <- VAR(Xres,p=1, type="cons")
-estres
-summary(estres, equation = "deltaPIBres")
-plot(estres, names= "deltaPIBres")
-summary(estres, equation="deltaGres")
-
-serres <- serial.test(estres, lags.pt = 16)
-serres$serial
-#Et là ça marche dès qu'on utilise 1 lag on obtient une p-value grande qui fait qu'on ne peut 
-#pas rejeter Hà :"Pas d'autocorrélation"
-
-est_residuals <- resid(estres)
-acf(est_residuals)
-
-norm3 <- normality.test(estres)
+norm3 <- normality.test(est)
 norm3$jb.mul
 #On ne peut pas rejeter que les résidus suivent une loi normale
-#Top mais le diagram of fit est pas ouf surtout qu'il y a un décalage
-#Quand on regarde significativité des coefficients trend pas significatif donc on peut l'enlever
-#par contre constante a l'air significatif
 
 
 #Passage au VAR structurel 
@@ -194,18 +139,18 @@ M1[2,3]<-0
 M2[1,2]<- 0
 
 #On calcule les epsilon(ta) 
-eps_ta=est_residuals[,1]-0.8*est_residuals[,3]
+eps_ta=res[,1]-0.8*res[,3]
 
 #Regression MCO sur la deuxième equation pour obtenir beta_gt
-lineareq2 <- lm(est_residuals[,2] ~ eps_ta - 1) #on ne veut pas d'intercept
+lineareq2 <- lm(res[,2] ~ eps_ta - 1) #on ne veut pas d'intercept
 #on n'obtient -0.02, Biau et Girard eux obtiennent -0.05.
 eps_tg <- residuals(lineareq2)
 M2[2,1]<- summary(lineareq2)$coefficients[1, 1]
-#Tous les coefficients de M2 sont maintenant identifiés !!!!
+#Tous les coefficients de M2 sont maintenant identifiés
 
 #Regression MCO (avec variables instrumentales) sur la troisième équation pour obtenir gamma_yt et gamma_yg
 #Les IV sont eps_ta pour u_ta et eps_tg pour u_tg
-lineareq3 <- ivreg(est_residuals[,3] ~ est_residuals[,1] + est_residuals[,2] -1| eps_ta +eps_tg)
+lineareq3 <- ivreg(res[,3] ~ res[,1] + res[,2] -1| eps_ta +eps_tg)
 M1[3,1]<- - summary(lineareq3)$coefficients[1,1]
 M1[3,2] <- - summary(lineareq3)$coefficients[2,1]
 #Tous les coefficients de M1 sont aussi identifiés
@@ -224,17 +169,17 @@ rho <- matrix(numeric(0),3,3)
 
 for (j in 1:3)
 {
-  rho[1,j] <- coef(estres)$deltaTAres[j,1]
+  rho[1,j] <- coef(est)$deltaTA[j,1]
 }
 
 for (j in 1:3)
 {
-  rho[2,j] <- coef(estres)$deltaGres[j,1]
+  rho[2,j] <- coef(est)$deltaG[j,1]
 }
 
 for (j in 1:3)
 {
-  rho[3,j] <- coef(estres)$deltaPIBres[j,1]
+  rho[3,j] <- coef(est)$deltaPIB[j,1]
 }
 
 
@@ -275,17 +220,17 @@ IRF_G <- matrix(numeric(0), horizon,n_iter)
 IRF_PIB <- matrix(numeric(0),horizon,n_iter)
 for (i in 1:n_iter)
 {
-  #Générer de nouvelles donn?es de meme taille
-  Xmonte <- matrix(numeric(0), 3,115)
-  Xmonte[,1]=P%*%residuals(estres)[sample(1:115, 1),]
-  for (j in 2:115)
+  #Générer de nouvelles données de meme taille
+  Xmonte <- matrix(numeric(0), 3,98)
+  Xmonte[,1]=P%*%residuals(est)[sample(1:98, 1),]
+  for (j in 2:98)
   {
-    Xmonte[,j]=rho%*%Xmonte[,j-1]+P%*%residuals(estres)[sample(1:115, 1),]
+    Xmonte[,j]=rho%*%Xmonte[,j-1]+P%*%residuals(est)[sample(1:98, 1),]
   }
   #Estime le modèle sur ces données
   
   Xmonte <- data.frame(Xmonte[1,], Xmonte[2,], Xmonte[3,])
-  estmonte <- VAR(Xmonte,p=1, type="cons")
+  estmonte <- VAR(Xmonte,p=4, type="cons")
   estmonte_residuals <-residuals(estmonte)
   #Estimer le nouveau P (donc M1 et M2)
   
@@ -396,17 +341,24 @@ for (j in 1:horizon)
 Max_PIB <- resultsNiveauxLn[3,] +sc*sqrt(varIRF_PIB)
 Min_PIB <- resultsNiveauxLn[3,] -sc*sqrt(varIRF_PIB)
 
-plot(resultsNiveauxLn[3,],type="l",col="blue",ylim=c(-1,1))
-lines(Max_PIB,type="l",col="red")
-lines(Min_PIB,type="l",col="red")
+#Tracé des graphes
+par(mfrow=c(2,2))
+plot(resultsNiveauxLn[1,],type="l",col="blue",ylim=c(-1,1.5),xlab="",ylab="Recettes")
+lines(Max_TA,lty=2,col="red")
+lines(Min_TA,lty=2,col="red")
+lines(Ligne,type="l",col="black")
 
-plot(resultsNiveauxLn[2,],type="l",col="blue",ylim=c(-1,1))
-lines(Max_G,type="l",col="red")
-lines(Min_G,type="l",col="red")
+plot(resultsNiveauxLn[2,],type="l",col="blue",ylim=c(-0.5,0.5),xlab="",ylab="Dépenses")
+lines(Max_G,lty=2,col="red")
+lines(Min_G,lty=2,col="red")
+lines(Ligne,type="l",col="black")
 
-plot(resultsNiveauxLn[1,],type="l",col="blue",ylim=c(0,2))
-lines(Max_TA,type="l",col="red")
-lines(Min_TA,type="l",col="red")
+
+plot(resultsNiveauxLn[3,],type="l",col="blue",ylim=c(-0.5,0.5),xlab="",ylab="PIB")
+lines(Max_PIB,lty=2,col="red")
+lines(Min_PIB,lty=2,col="red")
+lines(Ligne,type="l",col="black")
+
 
 
 #Choc sur dépenses
@@ -451,11 +403,11 @@ IRF_PIB_2 <- matrix(numeric(0),horizon,n_iter)
 for (i in 1:n_iter)
 {
   #Générer de nouvelles données de meme taille
-  Xmonte_2 <- matrix(numeric(0), 3,115)
-  Xmonte_2[,1]=P%*%residuals(estres)[sample(1:115, 1),]
-  for (j in 2:115)
+  Xmonte_2 <- matrix(numeric(0), 3,98)
+  Xmonte_2[,1]=P%*%residuals(est)[sample(1:98, 1),]
+  for (j in 2:98)
   {
-    Xmonte_2[,j]=rho%*%Xmonte_2[,j-1]+P%*%residuals(estres)[sample(1:115, 1),]
+    Xmonte_2[,j]=rho%*%Xmonte_2[,j-1]+P%*%residuals(est)[sample(1:98, 1),]
   }
   
   #Estime le modèle sur ces données
@@ -572,15 +524,26 @@ for (j in 1:horizon)
 Max_PIB_2 <- results2NiveauxLn[3,] +sc*sqrt(varIRF_PIB_2)
 Min_PIB_2 <- results2NiveauxLn[3,] -sc*sqrt(varIRF_PIB_2)
 
-plot(results2NiveauxLn[3,],type="l",col="blue",ylim=c(-2,2))
-lines(Max_PIB_2,type="l",col="red")
-lines(Min_PIB_2,type="l",col="red")
+par(mfrow=c(2,2))
 
-plot(results2NiveauxLn[2,],type="l",col="blue",ylim=c(0,4))
-lines(Max_G_2,type="l",col="red")
-lines(Min_G_2,type="l",col="red")
+plot(results2NiveauxLn[1,],type="l",col="blue",ylim=c(-3,3),xlab="",ylab="Recettes")
+lines(Max_TA_2,lty=2,col="red")
+lines(Min_TA_2,lty=2,col="red")
+lines(Ligne,type="l",col="black")
 
-plot(results2NiveauxLn[1,],type="l",col="blue",ylim=c(-5,5))
-lines(Max_TA_2,type="l",col="red")
-lines(Min_TA_2,type="l",col="red")
+
+plot(results2NiveauxLn[2,],type="l",col="blue",ylim=c(0,4),xlab="",ylab="Dépenses")
+lines(Max_G_2,lty=2,col="red")
+lines(Min_G_2,lty=2,col="red")
+lines(Ligne,type="l",col="black")
+
+
+plot(results2NiveauxLn[3,],type="l",col="blue",ylim=c(-1.5,2.5),xlab="",ylab="PIB")
+lines(Max_PIB_2,lty=2,col="red")
+lines(Min_PIB_2,lty=2,col="red")
+lines(Ligne,type="l",col="black")
+
+
+
+
 
